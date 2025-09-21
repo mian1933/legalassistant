@@ -1,171 +1,103 @@
 import os
-import json
-from typing import List, Dict, Any, Iterator
+from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
-import re
-import time
 import torch
 import chromadb
-from tqdm import tqdm
 
-CHROMA_DB_PATH = "[PATH_TO_YOUR_CHROMA_DB_FOLDER]"
-COLLECTION_NAME = "[YOUR_COLLECTION_NAME]"
-JSON_FILE_PATH = "[PATH_TO_YOUR_JSONL_FILE]"
-TXT_FOLDER_PATH = "[PATH_TO_YOUR_TXT_FOLDER]"
-MODEL_NAME = "[PATH_TO_YOUR_SENTENCE_TRANSFORMER_MODEL]"
+
+CHROMA_DB_PATH = "/home/sa/bar-exam-housing/processed_data/passage/chroma_db_large2/"
+COLLECTION_NAME = "legal_docs_large_collection2"
+MODEL_NAME = "/home/sa/bar-exam-housing/bge-m3"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-TOKEN_CHUNK_SIZE = 1000
-TOKEN_OVERLAP = 100
-DOC_CHUNK_SIZE = 128
-EMBEDDING_BATCH_SIZE = 128
 
 
-def split_text_by_tokens(text: str, tokenizer, chunk_size: int, chunk_overlap: int) -> List[str]:
-    if not isinstance(text, str) or not text.strip():
-        return []
-
-    tokens = tokenizer.encode(text, add_special_tokens=False)
-    if not tokens:
-        return []
-
-    chunks = []
-    step = chunk_size - chunk_overlap
-    for i in range(0, len(tokens), step):
-        chunk_tokens = tokens[i:i + chunk_size]
-        if chunk_tokens:
-            chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True).strip()
-            if chunk_text:
-                chunks.append(chunk_text)
-    return chunks
 
 
-def stream_data(json_path: str, txt_folder: str, chunk_size: int) -> Iterator[List[Dict[str, Any]]]:
-    chunk = []
-    try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        data = json.loads(line)
-                        raw_text = data.get('text')
-                        text = str(raw_text or '').strip()
-                        if text:
-                            metadata = data.get('metadata', {})
-                            if not isinstance(metadata, dict):
-                                metadata = {'original_metadata': metadata}
-                            chunk.append({'content': text, 'metadata': metadata})
-                            if len(chunk) >= chunk_size:
-                                yield chunk
-                                chunk = []
-                    except json.JSONDecodeError:
-                        continue
-    except FileNotFoundError:
-        print(f"Warning: JSONL file '{json_path}' not found.")
+class ChromaVectorSearchEngine:
 
-    if os.path.isdir(txt_folder):
-        txt_files = [fn for fn in os.listdir(txt_folder) if fn.endswith('.txt')]
-        for fn in txt_files:
-            file_path = os.path.join(txt_folder, fn)
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                if content:
-                    chunk.append({'content': content, 'metadata': {'source': fn}})
-                    if len(chunk) >= chunk_size:
-                        yield chunk
-                        chunk = []
-    if chunk:
-        yield chunk
+    def __init__(self, collection, model):
+        self.collection = collection
+        self.model = model
 
-
-def main():
-    print("=" * 20 + " STAGE 1: Initializing ChromaDB " + "=" * 20)
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    collection = client.get_or_create_collection(name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
-    print(f"✅ Database and collection '{COLLECTION_NAME}' initialized successfully.\n")
-
-    print("=" * 20 + " STAGE 2: Populating Database (Chunking & Streaming Mode) " + "=" * 20)
-
-    if collection.count() > 0:
-        print(f"✅ Collection already contains {collection.count()} chunks, skipping population step.")
-        return
-
-    print(f"Collection is empty, starting initial data chunking, embedding, and ingestion...")
-    print(f"Text chunking config: Chunk Size = {TOKEN_CHUNK_SIZE} tokens, Overlap = {TOKEN_OVERLAP} tokens.")
-
-    print("Loading embedding model...")
-    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
-    print("✅ Model loaded successfully.")
-
-    data_generator = stream_data(JSON_FILE_PATH, TXT_FOLDER_PATH, DOC_CHUNK_SIZE)
-
-    total_chunks_processed = 0
-    for doc_chunk_id, doc_chunk in enumerate(data_generator):
-        if not doc_chunk:
-            continue
-
-        start_time = time.time()
-        print(f"--- Processing document batch #{doc_chunk_id + 1} (containing {len(doc_chunk)} documents) ---")
-
-        batch_texts = []
-        batch_metadatas = []
-        batch_ids = []
-
-        for doc in doc_chunk:
-            text_chunks = split_text_by_tokens(
-                doc['content'],
-                model.tokenizer,
-                TOKEN_CHUNK_SIZE,
-                TOKEN_OVERLAP
-            )
-
-            for i, text_chunk in enumerate(text_chunks):
-                new_id = str(total_chunks_processed + len(batch_ids))
-                new_metadata = doc['metadata'].copy()
-                new_metadata['chunk_id'] = i
-
-                if 'path' in new_metadata:
-                    new_metadata['source'] = new_metadata['path']
-
-                if 'source' not in new_metadata:
-                    new_metadata['source'] = 'unknown_source'
-
-                batch_texts.append(text_chunk)
-                batch_metadatas.append(new_metadata)
-                batch_ids.append(new_id)
-
-        if not batch_texts:
-            print("No valid text chunks produced from this batch, skipping.")
-            continue
-
-        print(f"Generated {len(batch_texts)} text chunks from {len(doc_chunk)} documents, preparing for embedding...")
-
-        embeddings_batch = model.encode(
-            batch_texts,
-            batch_size=EMBEDDING_BATCH_SIZE,
-            normalize_embeddings=True,
-            show_progress_bar=True,
-            device=DEVICE
+    def search(self, query_str: str, top_k: int = 1) -> List[Dict[str, Any]]:
+        # 1. 将查询编码为向量
+        query_embedding = self.model.encode(
+            query_str, normalize_embeddings=True, convert_to_numpy=True
         ).tolist()
 
-        collection.add(
-            ids=batch_ids,
-            embeddings=embeddings_batch,
-            documents=batch_texts,
-            metadatas=batch_metadatas
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            include=["metadatas", "documents", "distances"]  # 直接包含文档内容
         )
 
-        total_chunks_processed += len(batch_texts)
-        end_time = time.time()
+        if not results['ids'][0]:
+            return []
 
-        print(f"✅ Document batch #{doc_chunk_id + 1} processed in: {end_time - start_time:.2f} seconds.")
-        print(f"Total text chunks processed so far: {total_chunks_processed}\n")
+        formatted_results = []
+        for i in range(len(results['ids'][0])):
+            formatted_results.append({
+                'content': results['documents'][0][i],
+                'metadata': results['metadatas'][0][i],
+                # 将距离转换为0-1范围的相似度分数
+                'score': 1 - results['distances'][0][i]
+            })
 
-    print("=" * 60)
-    print("🎉 All data has been successfully chunked, embedded, and indexed!")
-    print(f"Database located at: '{CHROMA_DB_PATH}', Collection name: '{COLLECTION_NAME}'")
-    print(f"A total of {total_chunks_processed} text chunks were processed.")
-    print("=" * 60)
+        return formatted_results
 
 
-if __name__ == "__main__":
-    main()
+
+
+class SystemInitializer:
+    def __init__(self):
+        print("=" * 20 + " 检索系统初始化开始 " + "=" * 20)
+        self.collection = self._connect_to_chromadb()
+        # 不再需要加载所有文本块到内存
+        self.engine = self._initialize_engine()
+        print("=" * 20 + " ✅ 检索系统初始化完成 " + "=" * 20 + "\n")
+
+    def _connect_to_chromadb(self):
+        """连接到现有的 ChromaDB 数据库并获取集合。"""
+        print("--- 正在连接到 ChromaDB... ---")
+        if not os.path.exists(CHROMA_DB_PATH):
+            raise FileNotFoundError(f"错误: 数据库路径 '{CHROMA_DB_PATH}' 不存在。请先运行新的建库脚本。")
+
+        client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        try:
+            collection = client.get_collection(name=COLLECTION_NAME)
+            print(f"✅ 成功连接到集合'{COLLECTION_NAME}'，其中包含 {collection.count()} 个文本块。\n")
+            return collection
+        except Exception as e:
+            raise ValueError(f"错误: 无法获取集合 '{COLLECTION_NAME}'。错误信息: {e}")
+
+    def _initialize_engine(self) -> ChromaVectorSearchEngine:
+        """加载模型并创建搜索引擎实例。"""
+        print("--- 正在加载查询模型... ---")
+        query_model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+        engine = ChromaVectorSearchEngine(
+            self.collection,
+            query_model
+        )
+        print("✅ 查询模型加载完成。\n")
+        return engine
+
+
+
+try:
+    print("正在初始化检索系统模块...")
+    _system_instance = SystemInitializer()
+except Exception as e:
+    print(f"致命错误：检索系统初始化失败！错误信息: {e}")
+    _system_instance = None
+
+
+def query(query_text: str, top_k: int = 1, **kwargs) -> List[Dict[str, Any]]:
+    if _system_instance is None:
+        print("错误：检索系统未被成功初始化，无法执行查询。")
+        return []
+
+    if not query_text or not isinstance(query_text, str):
+        print("错误：查询文本无效。")
+        return []
+
+    return _system_instance.engine.search(query_str=query_text, top_k=top_k)
