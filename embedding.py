@@ -20,7 +20,6 @@ class ChromaVectorSearchEngine:
         self.model = model
 
     def search(self, query_str: str, top_k: int = 1) -> List[Dict[str, Any]]:
-        # 1. 将查询编码为向量
         query_embedding = self.model.encode(
             query_str, normalize_embeddings=True, convert_to_numpy=True
         ).tolist()
@@ -39,7 +38,6 @@ class ChromaVectorSearchEngine:
             formatted_results.append({
                 'content': results['documents'][0][i],
                 'metadata': results['metadatas'][0][i],
-                # 将距离转换为0-1范围的相似度分数
                 'score': 1 - results['distances'][0][i]
             })
 
@@ -52,12 +50,10 @@ class SystemInitializer:
     def __init__(self):
         print("=" * 20 + " 检索系统初始化开始 " + "=" * 20)
         self.collection = self._connect_to_chromadb()
-        # 不再需要加载所有文本块到内存
         self.engine = self._initialize_engine()
         print("=" * 20 + " ✅ 检索系统初始化完成 " + "=" * 20 + "\n")
 
     def _connect_to_chromadb(self):
-        """连接到现有的 ChromaDB 数据库并获取集合。"""
         print("--- 正在连接到 ChromaDB... ---")
         if not os.path.exists(CHROMA_DB_PATH):
             raise FileNotFoundError(f"错误: 数据库路径 '{CHROMA_DB_PATH}' 不存在。请先运行新的建库脚本。")
@@ -71,7 +67,6 @@ class SystemInitializer:
             raise ValueError(f"错误: 无法获取集合 '{COLLECTION_NAME}'。错误信息: {e}")
 
     def _initialize_engine(self) -> ChromaVectorSearchEngine:
-        """加载模型并创建搜索引擎实例。"""
         print("--- 正在加载查询模型... ---")
         query_model = SentenceTransformer(MODEL_NAME, device=DEVICE)
         engine = ChromaVectorSearchEngine(
