@@ -15,10 +15,12 @@ To enable efficient retrieval, we need to build a vector database:
 pip install chromadb
 
 python embedding2.py
+```
 
-##❓ **Run Question Answering**
+## ❓ **Run Question Answering**
 
 Once the index is built, you can run the QA pipeline with:
 
 ```bash
 python run.py
+
