@@ -1,6 +1,5 @@
 # ⚖️ Legal Assistant
-**Legal Assistant** is an AI-powered system designed to assist with **legal document analysis** and **question answering**.  
-It combines **large language models (LLMs)** with **retrieval-augmented generation (RAG)**, enabling accurate and efficient responses across a wide range of legal queries.
+**Legal Assistant** is an AI-powered system designed to assist with **legal document analysis** and **question answering**.  It combines **large language models (LLMs)** with **retrieval-augmented generation (RAG)**, enabling accurate and efficient responses across a wide range of legal queries.
 
 ## ⚙️ Setup Environment
 
