@@ -1,4 +1,3 @@
-# main_assistant_final.py (Removed debug print)
 import readline
 import subprocess
 import sys
