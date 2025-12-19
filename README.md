@@ -17,6 +17,10 @@ We use two types of models in this project. Please download them:
 - **Embedding Model**: [bge-m3](https://huggingface.co/BAAI/bge-m3).
 
 ---
+## 📥 Download datasets
+
+- [dataset1](https://huggingface.co/datasets/reglab/barexam_qa)  
+- [dataset2](https://huggingface.co/datasets/reglab/housing_qa)  
 
 ## 🏗️ Build Index
 
